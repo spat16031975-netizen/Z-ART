@@ -1,8 +1,0 @@
-{
-  "name": "z-art",
-  "version": "1.0.0",
-  "private": true,
-  "description": "Z-Art: сайт и отправка заявок в Telegram",
-  "scripts": { "start": "node server.js" },
-  "engines": { "node": ">=18" }
-}
