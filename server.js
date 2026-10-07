@@ -22,8 +22,10 @@ function allowed(ip) {
 }
 setInterval(() => { const now = Date.now(); for (const [ip, l] of hits) if (!l.some(t => now - t < WINDOW)) hits.delete(ip); }, WINDOW).unref();
 
+// Сайт может открываться и с Railway, и с GitHub Pages, поэтому разрешаем запросы с других адресов.
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
 function json(res, code, obj) {
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...CORS });
   res.end(JSON.stringify(obj));
 }
 function readBody(req) {
@@ -40,6 +42,7 @@ const server = http.createServer(async (req, res) => {
   const m = url.pathname.match(/^\/api\/tg\/(\w+)$/);
 
   if (m) {
+    if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
     if (req.method !== 'POST' || !METHODS.has(m[1])) return json(res, 404, { ok: false, error: 'not found' });
     if (!BOT_TOKEN || !CHAT_ID) return json(res, 503, { ok: false, error: 'BOT_TOKEN or CHAT_ID is not set' });
     const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
