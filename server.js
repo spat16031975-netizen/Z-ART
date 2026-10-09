@@ -30,8 +30,8 @@ const INDEX = path.join(ROOT, 'index.html');
 // ---------- проверка файлов по содержимому («магические байты») ----------
 function sniff(buf) {
   if (!buf || buf.length < 12) return null;
-  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'jpeg';
-  if (buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))) return 'png';
+  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF && buf.at(-2) === 0xFF && buf.at(-1) === 0xD9) return 'jpeg';
+  if (buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])) && buf.slice(-8, -4).toString('latin1') === 'IEND') return 'png';
   if (buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') return 'webp';
   if (buf.toString('latin1', 4, 8) === 'ftyp' && /^(heic|heix|hevc|hevx|heim|heis|mif1|msf1)$/.test(buf.toString('latin1', 8, 12))) return 'heic';
   if (buf[0] === 0 && buf[1] === 0 && buf[2] === 1 && buf[3] === 0) return 'ico';
@@ -166,9 +166,12 @@ const server = http.createServer(async (req, res) => {
     try {
       const raw = await readBody(req);
       const clean = buildTelegramBody(m[1], req, raw);
-      const r = await fetch(`${TG_API}/bot${BOT_TOKEN}/${m[1]}`, { method: 'POST', headers: clean.headers, body: clean.body });
-      if (!r.ok) console.error('Telegram error', r.status, (await r.text()).slice(0, 300));
-      return json(req, res, r.ok ? 200 : 502, { ok: r.ok });
+      const r = await fetch(`${TG_API}/bot${BOT_TOKEN}/${m[1]}`, { method: 'POST', headers: clean.headers, body: clean.body, signal: AbortSignal.timeout(15000) });
+      let result = null;
+      try { result = await r.json(); } catch (e) { /* некорректный ответ внешнего сервиса */ }
+      const ok = r.ok && result && result.ok === true;
+      if (!ok) console.error('Telegram error', r.status, result && result.description ? String(result.description).slice(0, 300) : 'invalid response');
+      return json(req, res, ok ? 200 : 502, { ok });
     } catch (e) {
       if (e.code) { console.warn('Rejected', m[1], ip, e.message); return json(req, res, e.code, { ok: false, error: e.message }); }
       console.error('Send failed:', e.message);

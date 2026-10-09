@@ -849,7 +849,7 @@ h1,h2,.hero h1 em,.logo,.logo span{text-shadow:none}
         <h3>Оплата</h3>
         <ul class="tbl" id="paymentList"></ul>
         <h3 style="margin-top:12px">Возврат</h3>
-        <p style="color:var(--muted)">Набор из каталога можно вернуть в течение 14 дней, если упаковка не вскрыта и краски не тронуты. Брак меняем или возвращаем деньги.</p>
+        <p style="color:var(--muted)">Набор из каталога можно вернуть в течение 14 дней, если он не был в употреблении и сохранены его потребительские свойства. Брак меняем или возвращаем деньги.</p>
         <p class="note"><svg class="ico"><use href="#i-info"/></svg><span>Картина по фото делается под тебя, поэтому до печати мы согласуем макет. Отказаться после утверждения макета можно, возместив расходы на изготовление. Все условия возврата — в <button class="linkbtn" type="button" data-doc="offer" style="min-height:0;padding:0">публичной оферте</button>.</span></p>
       </div>
     </div>
@@ -915,6 +915,7 @@ h1,h2,.hero h1 em,.logo,.logo span{text-shadow:none}
 
 <dialog class="modal" id="productDlg" aria-labelledby="pmTitle"></dialog>
 <dialog class="modal sheet" id="sheetDlg" aria-labelledby="sheetTitle"></dialog>
+<dialog class="modal sheet" id="docDlg" aria-labelledby="docTitle"></dialog>
 <dialog class="drawer" id="cartDlg" aria-labelledby="drTitle">
   <div class="dr-head"><button class="iconbtn" type="button" id="drBack" aria-label="Назад" hidden><svg class="ico"><use href="#i-left"/></svg></button><h2 id="drTitle">Корзина</h2><button class="iconbtn" type="button" id="drClose" aria-label="Закрыть корзину"><svg class="ico"><use href="#i-x"/></svg></button></div>
   <ol class="steps" id="drSteps" aria-label="Шаги оформления"><li>Корзина</li><li>Доставка</li><li>Оплата</li></ol>
@@ -1060,7 +1061,7 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const ico = (n, c = '') => `<svg class="ico ${c}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const byn = n => `${n} BYN`;
+const byn = n => `${Number(n).toLocaleString('ru-BY', { minimumFractionDigits: Number.isInteger(Number(n)) ? 0 : 2, maximumFractionDigits: 2 })} BYN`;
 const store = {
   // Корзина и контакты живут только до закрытия вкладки: перезагрузку переживают, а следующий посетитель начинает с чистого листа.
   get(k, d) { try { const v = sessionStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -1073,10 +1074,9 @@ let P = [], R = [], C = {}, byId = {}, cats = [];
 let cart = store.get('zart.cart', { items: [], custom: [], promo: '' });
 let form = store.get('zart.form', { name: '', phone: '', email: '', delivery: '', address: '', payment: '' });
 const photoFiles = new Map(); // оригиналы загруженных фото живут до перезагрузки страницы
-let lastLeadSig = '';
-let step = 1, filter = 'Все', shown = 8, lastOrder = null;
-const saveCart = () => store.set('zart.cart', cart);
-const saveForm = () => store.set('zart.form', form);
+let step = 1, filter = 'Все', shown = 8, lastOrder = null, pendingOrder = null;
+const saveCart = () => { pendingOrder = null; store.set('zart.cart', cart); };
+const saveForm = () => { pendingOrder = null; store.set('zart.form', form); };
 
 /* ---------- helpers ---------- */
 const CAT_TOKENS = ['--cyan', '--orange', '--violet-soft', '--yellow'];
@@ -1153,12 +1153,12 @@ const totals = () => {
       const sc = promo.scope, base = sc === 'все' ? sub : sc === 'каталог' ? catSum(() => true) : sc === 'по фото' ? photoSum : catSum(p => p.category.toLowerCase() === sc);
       if (!base) promoErr = `Промокод действует только ${scopeName(sc)}. Добавь такую картину в корзину.`;
       else if (sub < promo.min) promoErr = `Промокод действует при заказе от ${byn(promo.min)}. Добавь ещё на ${byn(Math.ceil(promo.min - sub))}.`;
-      else codeDisc = promo.pct ? Math.round(base * promo.value / 100) : Math.min(promo.value, base);
+      else codeDisc = promo.pct ? Math.round(base * promo.value) / 100 : Math.min(promo.value, base);
     }
   }
   // автоматическая скидка за несколько картин
   const pair = (C.promo && C.promo.pair) || null;
-  const autoDisc = pair && count >= pair.count ? Math.round(sub * pair.pct / 100) : 0;
+  const autoDisc = pair && count >= pair.count ? Math.round(sub * pair.pct) / 100 : 0;
   let discount = 0, dLabel = '';
   if (codeDisc && codeDisc >= autoDisc) { discount = codeDisc; dLabel = `Промокод ${cart.promo}`; promoMsg = `Промокод применён: −${byn(codeDisc)}.`; }
   else if (autoDisc) { discount = autoDisc; dLabel = `${pair.label} −${pair.pct}%`; if (codeDisc) promoMsg = `Скидка «${pair.label}» выгоднее, поэтому применили её. Скидки не суммируются.`; }
@@ -1188,16 +1188,17 @@ async function copyText(text, okMsg) {
 }
 
 /* ---------- dialogs ---------- */
-const productDlg = $('#productDlg'), sheetDlg = $('#sheetDlg'), cartDlg = $('#cartDlg');
+const productDlg = $('#productDlg'), sheetDlg = $('#sheetDlg'), docDlg = $('#docDlg'), cartDlg = $('#cartDlg');
 const syncLock = () => document.body.classList.toggle('locked', !!document.querySelector('dialog[open]'));
 function showDlg(d) { if (!d.open) d.showModal(); syncLock(); }
-[sheetDlg, cartDlg].forEach(d => {
+[sheetDlg, docDlg, cartDlg].forEach(d => {
   d.addEventListener('close', syncLock);
   d.addEventListener('click', e => { if (e.target === d) d.close(); });
 });
 productDlg.addEventListener('cancel', e => { e.preventDefault(); closeProduct(); });
 productDlg.addEventListener('click', e => { if (e.target === productDlg || e.target.closest('[data-close]')) closeProduct(); });
 sheetDlg.addEventListener('click', e => { if (e.target.closest('[data-close]')) sheetDlg.close(); });
+docDlg.addEventListener('click', e => { if (e.target.closest('[data-close]')) docDlg.close(); });
 
 /* ---------- product modal + deep link ---------- */
 let pushed = false, pmQty = 1;
@@ -1353,7 +1354,7 @@ function renderCart() {
     if (t.promoErr) setErr('promoErr', esc(t.promoErr), $('#promoIn'));
     $('#promoBtn').onclick = applyPromo;
     body.insertAdjacentHTML('beforeend', `<button class="btn ghost sm" type="button" id="cartClear" style="justify-self:start">${ico('trash')}Очистить корзину</button>`);
-    $('#cartClear').onclick = () => { cart = { items: [], custom: [], promo: '' }; form = { name: '', phone: '', email: '', delivery: '', address: '', payment: '' }; photoFiles.clear(); lastLeadSig = ''; saveCart(); saveForm(); syncCartUI(); renderCart(); };
+    $('#cartClear').onclick = () => { cart = { items: [], custom: [], promo: '' }; form = { name: '', phone: '', email: '', delivery: '', address: '', payment: '' }; photoFiles.clear(); pendingOrder = null; saveCart(); saveForm(); syncCartUI(); renderCart(); };
     $('#promoIn').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); applyPromo(); } };
   } else if (step === 2) {
     if (!form.delivery) form.delivery = C.delivery[0].id;
@@ -1414,13 +1415,18 @@ function nextStep() {
     setErr('fNameErr', e1, $('#fName')); setErr('fPhoneErr', e2, $('#fPhone')); setErr('fEmailErr', e4, $('#fEmail')); setErr('fAddrErr', e3, $('#fAddr'));
     first = e1 ? $('#fName') : e2 ? $('#fPhone') : e4 ? $('#fEmail') : e3 ? $('#fAddr') : null;
     if (first) { first.focus(); return; }
-    sendCheckoutLead();
     step = 3; renderCart(); return;
   }
   if (step === 3) {
+    const missingPhoto = cart.custom.find(c => !photoFiles.has(c.key));
+    if (missingPhoto) {
+      setErr('orderErr', 'После обновления страницы исходное фото нужно выбрать заново. Нажми «Назад», затем «Изменить» у картины по фото и загрузи оригинал ещё раз.');
+      return;
+    }
     const btn = $('#drNext'); btn.classList.add('busy'); btn.setAttribute('aria-busy', 'true'); setErr('orderErr', '');
     const t = totals();
-    const order = { no: 'Z-' + String(Date.now()).slice(-6), total: t.total, pay: (C.payment.find(p => p.id === form.payment) || C.payment[0]), method: t.method, hasCustom: cart.custom.length > 0, phone: form.phone };
+    const order = pendingOrder || { no: `Z-${crypto.randomUUID().slice(0, 8).toUpperCase()}`, total: t.total, pay: (C.payment.find(p => p.id === form.payment) || C.payment[0]), method: t.method, hasCustom: cart.custom.length > 0, phone: form.phone, textSent: false, sentPhotos: new Set() };
+    pendingOrder = order;
     const wait = new Promise(r => setTimeout(r, 700));
     Promise.all([sendOrder(order, t), wait]).then(([ok]) => {
       if (ok !== true) {
@@ -1430,7 +1436,7 @@ function nextStep() {
       }
       lastOrder = order;
       // Заказ ушёл: стираем контакты и адрес, чтобы следующий покупатель на этом устройстве начал с чистой формы.
-      form = { name: '', phone: '', email: '', delivery: '', address: '', payment: '' }; saveForm(); lastLeadSig = ''; photoFiles.clear();
+      form = { name: '', phone: '', email: '', delivery: '', address: '', payment: '' }; saveForm(); photoFiles.clear(); pendingOrder = null;
       cart = { items: [], custom: [], promo: '' }; saveCart(); syncCartUI();
       step = 4; renderCart();
     });
@@ -1483,8 +1489,7 @@ async function tgSendPhoto(item, caption) {
     const fd = new FormData(); if (!tgEnd()) fd.append('chat_id', C.telegram.chatId); fd.append('caption', caption);
     const file = photoFiles.get(item.key);
     if (file) { fd.append('document', file, file.name); return (await fetch(tgUrl('sendDocument'), { method: 'POST', body: fd })).ok; }
-    if (item.thumb) { fd.append('photo', await (await fetch(item.thumb)).blob(), 'preview.jpg'); return (await fetch(tgUrl('sendPhoto'), { method: 'POST', body: fd })).ok; }
-    return true;
+    return false;
   } catch (e) { return false; }
 }
 const cartLines = () => {
@@ -1493,16 +1498,20 @@ const cartLines = () => {
   return a.concat(b).join('\n') || 'пусто';
 };
 const contactLines = f => `Имя: ${esc(f.name)}\nТелефон: ${esc(f.phone)}\nПочта: ${esc(f.email)}`;
-function sendCheckoutLead() {
-  const t = totals(), sig = [form.phone, form.email, t.sub, t.count].join('|');
-  if (sig === lastLeadSig) return; lastLeadSig = sig;
-  tgSend(`🟡 <b>Контакты оставлены, заказ пока НЕ подтверждён</b>\n${contactLines(form)}\n\n<b>В корзине</b>\n${cartLines()}\nНа сумму: ${byn(t.sub)}\nДоставка: ${esc(t.method.label)}, ${esc(form.address)}\n\nЕсли следом не придёт «Новый заказ», человек не купил.`);
-}
 async function sendOrder(o, t) {
   const text = `🟢 <b>Новый заказ ${o.no}: КУПИЛ</b>\n${contactLines(form)}\n\n<b>Товары</b>\n${cartLines()}\n\nТовары: ${byn(t.sub)}${t.discount ? `\nСкидка (${esc(t.dLabel)}): −${byn(t.discount)}${t.promo && t.promo.once && t.dLabel.startsWith('Промокод') ? `\n⚠️ Промокод одноразовый (${esc(t.promo.note)}): проверь, что этот человек не использовал его раньше.` : ''}` : ''}${cart.promo && !t.dLabel.startsWith('Промокод') ? `\nВведён промокод ${esc(cart.promo)}, но он не применился: ${t.promoErr ? esc(t.promoErr) : 'автоматическая скидка оказалась выгоднее'}` : ''}\nДоставка: ${esc(t.method.label)} — ${t.free ? 'бесплатно' : byn(t.ship)}\n<b>Итого: ${byn(t.total)}</b>\n\nАдрес доставки: ${esc(form.address)}\nОплата: ${esc(o.pay.label)}`;
-  const ok = await tgSend(text);
-  if (ok === true) for (const c of cart.custom) await tgSendPhoto(c, `Фото к заказу ${o.no}: ${customDesc(c)}`);
-  return ok;
+  if (!o.textSent) {
+    const ok = await tgSend(text);
+    if (ok !== true) return ok;
+    o.textSent = true;
+  }
+  for (const c of cart.custom) {
+    if (o.sentPhotos.has(c.key)) continue;
+    const ok = await tgSendPhoto(c, `Фото к заказу ${o.no}: ${customDesc(c)}`);
+    if (ok !== true) return ok;
+    o.sentPhotos.add(c.key);
+  }
+  return true;
 }
 function initLead() {
   const f = $('#leadForm'); if (!f) return;
@@ -1752,7 +1761,7 @@ function openReviewForm() {
     if (file) rev.photo = `otzyv-${pad(now.getDate())}${pad(now.getMonth() + 1)}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.${file.type === 'image/png' ? 'png' : 'jpg'}`;
     const btn = $('#rvSend'); btn.classList.add('busy'); setErr('rvSendErr', '');
     let ok = await tgSend(`⭐ <b>Новый отзыв на проверку</b>\nИмя: ${esc(rev.name)}\nКартина: ${esc(p.title)} (${p.id})\nОценка: ${rev.rating} из 5\nФото: ${file ? `придёт следующим сообщением, имя для сайта: ${rev.photo}` : 'нет'}\n\n${esc(rev.text)}\n\n<b>Чтобы опубликовать</b>, скопируй блок ниже и вставь его в файл reviews.txt на GitHub:\n<pre>${esc(JSON.stringify(rev, null, 1))}</pre>`);
-    if (ok === true && file) await tgSendFile(file, `Фото к отзыву: ${rev.name}, ${p.title}.\nЧтобы показать его на сайте, сохрани фото под именем ${rev.photo} и загрузи на GitHub рядом с index.html.`);
+    if (ok === true && file) ok = await tgSendFile(file, `Фото к отзыву: ${rev.name}, ${p.title}.\nЧтобы показать его на сайте, сохрани фото под именем ${rev.photo} и загрузи на GitHub рядом с index.html.`);
     btn.classList.remove('busy');
     if (ok !== true) { setErr('rvSendErr', tgErr(ok, 'Отзыв не отправился')); return; }
     sheetDlg.innerHTML = `<button class="iconbtn x" type="button" data-close aria-label="Закрыть">${ico('x')}</button><div class="body"><h2 id="sheetTitle">Спасибо за отзыв</h2><p style="color:var(--muted)">Мы получили его и опубликуем после проверки.</p><button class="btn" type="button" data-close>Хорошо</button></div>`;
@@ -1837,9 +1846,9 @@ function openDoc(k) {
       delivery: C.delivery.map(d => `${d.label} — ${d.term}, ${byn(d.price)}`).join('; ')
     };
     const html = $(k === 'offer' ? '#offerTpl' : '#privacyTpl').innerHTML.replace(/\{\{(\w+)\}\}/g, (m, key) => esc(fill[key] ?? m));
-    sheetDlg.innerHTML = `<button class="iconbtn x" type="button" data-close aria-label="Закрыть">${ico('x')}</button><div class="body"><h2 id="sheetTitle">${k === 'offer' ? 'Публичная оферта' : 'Политика обработки персональных данных'}</h2>${html}<button class="btn ghost" type="button" data-close>Закрыть</button></div>`;
-    sheetDlg.classList.add('wide'); sheetDlg.addEventListener('close', () => sheetDlg.classList.remove('wide'), { once: true });
-    showDlg(sheetDlg); sheetDlg.scrollTop = 0; return;
+    docDlg.innerHTML = `<button class="iconbtn x" type="button" data-close aria-label="Закрыть">${ico('x')}</button><div class="body"><h2 id="docTitle">${k === 'offer' ? 'Публичная оферта' : 'Политика обработки персональных данных'}</h2>${html}<button class="btn ghost" type="button" data-close>Закрыть</button></div>`;
+    docDlg.classList.add('wide'); docDlg.addEventListener('close', () => docDlg.classList.remove('wide'), { once: true });
+    showDlg(docDlg); docDlg.scrollTop = 0; return;
   }
   const [t, body] = DOCS[k];
   sheetDlg.innerHTML = `<button class="iconbtn x" type="button" data-close aria-label="Закрыть">${ico('x')}</button><div class="body"><h2 id="sheetTitle">${t}</h2><p style="color:var(--muted)">${body}</p><button class="btn ghost" type="button" data-close>Закрыть</button></div>`;
